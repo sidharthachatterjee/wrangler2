@@ -4,9 +4,11 @@ import * as TOML from "@iarna/toml";
 import { mockAccountId, mockApiToken } from "./helpers/mock-account-id";
 import {
   createFetchResult,
+  setMockFetchKVGetValue,
   setMockRawResponse,
   setMockResponse,
   unsetAllMocks,
+  unsetMockFetchKVGetValues,
 } from "./helpers/mock-cfetch";
 import { mockConsoleMethods } from "./helpers/mock-console";
 import { mockKeyListRequest } from "./helpers/mock-kv";
@@ -31,6 +33,7 @@ describe("publish", () => {
 
   afterEach(() => {
     unsetAllMocks();
+    unsetMockFetchKVGetValues();
   });
 
   describe("environments", () => {
@@ -1231,6 +1234,134 @@ export default{
         [32m%s[0m If you think this is a bug then please create an issue at https://github.com/cloudflare/wrangler2/issues/new."
       `);
     });
+
+    it("should expire uploaded assets that aren't included anymore", async () => {
+      const assets = [
+        { filePath: "assets/file-1.txt", content: "Content of file-1" },
+        { filePath: "assets/file-2.txt", content: "Content of file-2" },
+      ];
+      const kvNamespace = {
+        title: "__test-name-workers_sites_assets",
+        id: "__test-name-workers_sites_assets-id",
+      };
+      writeWranglerToml({
+        main: "./index.js",
+        site: {
+          bucket: "assets",
+        },
+      });
+      writeWorkerSource();
+      writeAssets(assets);
+      mockUploadWorkerRequest();
+      mockSubDomainRequest();
+      mockListKVNamespacesRequest(kvNamespace);
+      mockKeyListRequest(
+        kvNamespace.id,
+        [
+          // Put file-1 in the KV namespace
+          "assets/file-1.2ca234f380.txt",
+          // As well as a couple from a previous upload
+          "assets/file-3.somehash.txt",
+          "assets/file-4.anotherhash.txt",
+        ],
+        100,
+        undefined,
+        // disable expiration values for this test
+        null
+      );
+
+      // Check that we pull down the values of file-3.txt and file-4.txt
+      setMockFetchKVGetValue(
+        "some-account-id",
+        "__test-name-workers_sites_assets-id",
+        "assets/file-3.somehash.txt",
+        btoa("Content of file-3")
+      );
+      setMockFetchKVGetValue(
+        "some-account-id",
+        "__test-name-workers_sites_assets-id",
+        "assets/file-4.anotherhash.txt",
+        btoa("Content of file-4")
+      );
+
+      // and send them back up
+      mockUploadAssetsToKVRequest(kvNamespace.id, [
+        ...assets.filter((a) => a.filePath !== "assets/file-1.txt"),
+        {
+          filePath: "assets/file-3.txt",
+          content: "Content of file-3",
+          expiration: Date.now() + 5 * 60 * 3000,
+        },
+        {
+          filePath: "assets/file-4.txt",
+          content: "Content of file-4",
+          expiration: Date.now() + 5 * 60 * 3000,
+        },
+      ]);
+
+      await runWrangler("publish");
+
+      expect(std.out).toMatchInlineSnapshot(`
+        "reading assets/file-1.txt...
+        skipping - already uploaded
+        reading assets/file-2.txt...
+        uploading as assets/file-2.5938485188.txt...
+        expiring unused assets/file-3.somehash.txt...
+        expiring unused assets/file-4.anotherhash.txt...
+        Uploaded test-name (TIMINGS)
+        Published test-name (TIMINGS)
+          test-name.test-sub-domain.workers.dev"
+      `);
+      expect(std.err).toMatchInlineSnapshot(`""`);
+    });
+
+    it("should not try to expire uploaded assets that are already set to expire", async () => {
+      const assets = [
+        { filePath: "assets/file-1.txt", content: "Content of file-1" },
+        { filePath: "assets/file-2.txt", content: "Content of file-2" },
+      ];
+      const kvNamespace = {
+        title: "__test-name-workers_sites_assets",
+        id: "__test-name-workers_sites_assets-id",
+      };
+      writeWranglerToml({
+        main: "./index.js",
+        site: {
+          bucket: "assets",
+        },
+      });
+      writeWorkerSource();
+      writeAssets(assets);
+      mockUploadWorkerRequest();
+      mockSubDomainRequest();
+      mockListKVNamespacesRequest(kvNamespace);
+      // These return with an expiration added on each of them
+      mockKeyListRequest(kvNamespace.id, [
+        // Put file-1 in the KV namespace
+        "assets/file-1.2ca234f380.txt",
+        // As well as a couple from a previous upload
+        "assets/file-3.somehash.txt",
+        "assets/file-4.anotherhash.txt",
+      ]);
+
+      // so only file-2 is going to get uploaded
+      mockUploadAssetsToKVRequest(kvNamespace.id, [
+        ...assets.filter((a) => a.filePath !== "assets/file-1.txt"),
+      ]);
+
+      await runWrangler("publish");
+
+      expect(std.out).toMatchInlineSnapshot(`
+        "reading assets/file-1.txt...
+        skipping - already uploaded
+        reading assets/file-2.txt...
+        uploading as assets/file-2.5938485188.txt...
+        Uploaded test-name (TIMINGS)
+        Published test-name (TIMINGS)
+          test-name.test-sub-domain.workers.dev"
+      `);
+      expect(std.err).toMatchInlineSnapshot(`""`);
+    });
   });
 
   describe("workers_dev setting", () => {
@@ -2161,7 +2292,7 @@ function mockListKVNamespacesRequest(...namespaces: KVNamespaceInfo[]) {
 /** Create a mock handler for the request that tries to do a bulk upload of assets to a KV namespace. */
 function mockUploadAssetsToKVRequest(
   expectedNamespaceId: string,
-  assets: { filePath: string; content: string }[]
+  assets: { filePath: string; content: string; expiration?: number }[]
 ) {
   setMockResponse(
     "/accounts/:accountId/storage/kv/namespaces/:namespaceId/bulk",

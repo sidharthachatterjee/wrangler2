@@ -4,13 +4,14 @@ export function mockKeyListRequest(
   expectedNamespaceId: string,
   expectedKeys: string[],
   keysPerRequest = 1000,
-  blankCursorValue: "" | undefined | null = undefined
+  blankCursorValue: "" | undefined | null = undefined,
+  expiration?: number | null
 ) {
   const requests = { count: 0 };
   // See https://api.cloudflare.com/#workers-kv-namespace-list-a-namespace-s-keys
   const expectedKeyObjects = expectedKeys.map((name) => ({
     name,
-    expiration: 123456789,
+    ...(expiration !== null && { expiration: expiration || 123456789 }),
     metadata: {},
   }));
   setMockRawResponse(
