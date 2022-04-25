@@ -24,7 +24,7 @@ describe("subcommand implicit help ran on incomplete command execution", () => {
       Commands:
         wrangler pages dev [directory] [-- command]  🧑‍💻 Develop your full-stack Pages application locally
         wrangler pages project                       ⚡️ Interact with your Pages projects
-        wrangler pages deployment                    🚀 Interact with the deployments of a project
+        wrangler pages publish [directory]           🆙 Publish a directory of static assets as a Pages deployment
 
       Flags:
         -c, --config      Path to .toml configuration file  [string]
@@ -32,6 +32,7 @@ describe("subcommand implicit help ran on incomplete command execution", () => {
         -v, --version     Show version number  [boolean]
             --legacy-env  Use legacy environments  [boolean]
 
+      🚧 'wrangler pages <command>' is a beta command. Please report any issues to https://github.com/cloudflare/wrangler2/issues/new/choose
       🚧 'wrangler pages <command>' is a beta command. Please report any issues to https://github.com/cloudflare/wrangler2/issues/new/choose"
     `);
   });
